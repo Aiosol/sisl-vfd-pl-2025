@@ -5,7 +5,7 @@ SISL VFD Stock Report Generator · v0.6 (git‑enabled)
 – Automatically clones / pulls the Git repo that contains the CSVs  
 – Excludes zero‑Qty and model FR‑S520SE‑0.2K‑19  
 – Calculates COGS, COGS×1.75, List Price, 1.27, discounts, GP %  
-– Sort order: capacity then D → E → F → A → HEL  
+– Sort order: capacity then D → E → F → A → HEL  
 – Outputs version‑tagged PDF to ./pdf_reports/
 """
 
@@ -15,9 +15,9 @@ import pandas as pd
 from fpdf import FPDF
 
 # ─── GIT SYNC (clone / pull) ───────────────────────────
-GIT_REPO   = "https://github.com/Aiosol/sisl-vfd-report.git"
-CLONE_DIR  = pathlib.Path.cwd() / "repo"      # local clone path
-DATA_SUBDIR = CLONE_DIR / "data"              # CSVs are here
+GIT_REPO    = "https://github.com/Aiosol/sisl-vfd-report.git"
+CLONE_DIR   = pathlib.Path.cwd() / "repo"      # local clone path
+DATA_SUBDIR = CLONE_DIR / "data"               # CSVs are here
 
 def git_sync():
     """Clone once or pull latest CSVs each run."""
@@ -43,10 +43,12 @@ def git_sync():
 git_sync()
 
 # ─── CONFIG ────────────────────────────────────────────
-DATA_DIR  = str(DATA_SUBDIR) if DATA_SUBDIR.exists() else "data"
-OUT_DIR   = "pdf_reports"
-MARGIN_INCH, ROW_H = 0.6, 5   # inch → mm row height
-HDR_FONT, BODY_FONT = 7, 7
+DATA_DIR      = str(DATA_SUBDIR) if DATA_SUBDIR.exists() else "data"
+OUT_DIR       = "pdf_reports"
+MARGIN_INCH   = 0.6    # inches
+ROW_H         = 5      # mm
+HDR_FONT      = 7
+BODY_FONT     = 7
 
 # ─── UTIL ──────────────────────────────────────────────
 def money(x):
@@ -56,14 +58,16 @@ def money(x):
         return ""
 
 # ─── LOCATE THE 3 CSVs ─────────────────────────────────
-paths = glob.glob(os.path.join(DATA_DIR, "*.csv"))
-inv_csv = price127_csv = listprice_csv = None
+paths            = glob.glob(os.path.join(DATA_DIR, "*.csv"))
+inv_csv          = price127_csv = listprice_csv = None
 
+# find the master list‑price file
 for p in paths:
     if os.path.basename(p).lower() == "vfd_price_sisl_final.csv":
         listprice_csv = p
         break
 
+# identify inventory vs. 1.27‑price files by header
 for p in paths:
     hdr = pd.read_csv(p, nrows=0).columns.str.strip().tolist()
     if {"Qty owned", "Total cost"}.issubset(hdr):
@@ -71,6 +75,7 @@ for p in paths:
     elif "1.27" in hdr:
         price127_csv = p
 
+# fallback for list‑price if not found by name
 if not listprice_csv:
     leftovers = [p for p in paths if p not in (inv_csv, price127_csv)]
     listprice_csv = leftovers[0] if leftovers else None
@@ -110,7 +115,7 @@ def list_price(model, lp):
     if model in lp:
         return lp[model]
 
-    mcap = re.search(r"-(?:H)?([\d.]+)K", model)
+    mcap  = re.search(r"-(?:H)?([\d.]+)K", model)
     family = mcap.group(1) + "K" if mcap else None
     if family:
         if any(t in model for t in ("D720", "D720S", "E720", "E820")):
@@ -150,9 +155,9 @@ inv.columns = inv.columns.str.strip()
 col_src = "Name" if "Name" in inv.columns else "Model"
 inv["Model"] = (
     inv[col_src]
-    .astype(str)
-    .apply(lambda s: s.split("||")[-1].strip())
-    .replace({"FR-D720S-025-NA": "FR-D720S-0.4K"})
+       .astype(str)
+       .apply(lambda s: s.split("||")[-1].strip())
+       .replace({"FR-D720S-025-NA": "FR-D720S-0.4K"})
 )
 
 inv = inv[
@@ -165,8 +170,8 @@ inv["TotalCost"]  = inv["Total cost"].str.replace(",", "").astype(float)
 inv["COGS"]       = inv["TotalCost"] / inv["Qty"]
 inv["COGS_x1.75"] = inv["COGS"] * 1.75
 
-p127 = pd.read_csv(price127_csv)
-p127_map = dict(
+p127       = pd.read_csv(price127_csv)
+p127_map   = dict(
     zip(
         p127.iloc[:, 0].str.strip(),
         p127.iloc[:, 1].astype(str).str.replace(",", "").astype(float),
@@ -249,7 +254,7 @@ pdf.cell(sum(w for _, w, _ in cols[3:]), ROW_H, "", 1, 0)
 
 # ─── version‑tagged filename ───────────────────────────
 os.makedirs(OUT_DIR, exist_ok=True)
-tag = datetime.now().strftime("%y%m%d")
+tag      = datetime.now().strftime("%y%m%d")
 existing = glob.glob(f"{OUT_DIR}/SISL_VFD_PL_{tag}_V.*.pdf")
 pattern  = re.compile(r"_V\.(\d{2})\.pdf$")
 vers     = [int(m.group(1)) for f in existing if (m := pattern.search(os.path.basename(f)))]
