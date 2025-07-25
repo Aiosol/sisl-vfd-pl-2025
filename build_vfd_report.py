@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SISL VFD Stock Report Generator · v0.6 (git‑enabled)
+SISL VFD Stock Report Generator · v0.7
 
 – Automatically clones / pulls the Git repo that contains the CSVs  
 – Excludes zero‑Qty and model FR‑S520SE‑0.2K‑19  
@@ -16,11 +16,10 @@ from fpdf import FPDF
 
 # ─── GIT SYNC (clone / pull) ───────────────────────────
 GIT_REPO    = "https://github.com/Aiosol/sisl-vfd-report.git"
-CLONE_DIR   = pathlib.Path.cwd() / "repo"      # local clone path
-DATA_SUBDIR = CLONE_DIR / "data"               # CSVs are here
+CLONE_DIR   = pathlib.Path.cwd() / "repo"
+DATA_SUBDIR = CLONE_DIR / "data"
 
 def git_sync():
-    """Clone once or pull latest CSVs each run."""
     if CLONE_DIR.exists():
         try:
             subprocess.run(
@@ -43,31 +42,29 @@ def git_sync():
 git_sync()
 
 # ─── CONFIG ────────────────────────────────────────────
-DATA_DIR      = str(DATA_SUBDIR) if DATA_SUBDIR.exists() else "data"
-OUT_DIR       = "pdf_reports"
-MARGIN_INCH   = 0.6    # inches
-ROW_H         = 5      # mm
-HDR_FONT      = 7
-BODY_FONT     = 7
+DATA_DIR    = str(DATA_SUBDIR) if DATA_SUBDIR.exists() else "data"
+OUT_DIR     = "pdf_reports"
+MARGIN_INCH = 0.6
+ROW_H       = 5
+HDR_FONT    = 7
+BODY_FONT   = 7
 
 # ─── UTIL ──────────────────────────────────────────────
 def money(x):
     try:
         return f"{float(x):,.2f}"
-    except Exception:
+    except:
         return ""
 
 # ─── LOCATE THE 3 CSVs ─────────────────────────────────
 paths            = glob.glob(os.path.join(DATA_DIR, "*.csv"))
 inv_csv          = price127_csv = listprice_csv = None
 
-# find the master list‑price file
 for p in paths:
     if os.path.basename(p).lower() == "vfd_price_sisl_final.csv":
         listprice_csv = p
         break
 
-# identify inventory vs. 1.27‑price files by header
 for p in paths:
     hdr = pd.read_csv(p, nrows=0).columns.str.strip().tolist()
     if {"Qty owned", "Total cost"}.issubset(hdr):
@@ -75,7 +72,6 @@ for p in paths:
     elif "1.27" in hdr:
         price127_csv = p
 
-# fallback for list‑price if not found by name
 if not listprice_csv:
     leftovers = [p for p in paths if p not in (inv_csv, price127_csv)]
     listprice_csv = leftovers[0] if leftovers else None
@@ -92,7 +88,7 @@ def parse_listprice(fp):
         for i, c in enumerate(cells):
             if c.startswith("FR-"):
                 model = c.split()[0]
-                for nxt in cells[i + 1:]:
+                for nxt in cells[i+1:]:
                     if re.fullmatch(r"[\d,]+(?:\.\d+)?", nxt):
                         mp[model] = float(nxt.replace(",", ""))
                         break
@@ -111,28 +107,23 @@ def fallback127(model, lookup):
     return None
 
 def list_price(model, lp):
-    """Return list price, using cross‑series fallback if needed."""
     if model in lp:
         return lp[model]
-
-    mcap  = re.search(r"-(?:H)?([\d.]+)K", model)
+    mcap = re.search(r"-(?:H)?([\d.]+)K", model)
     family = mcap.group(1) + "K" if mcap else None
     if family:
-        if any(t in model for t in ("D720", "D720S", "E720", "E820")):
+        if any(t in model for t in ("D720","D720S","E720","E820")):
             return lp.get(f"FR-A820-{family}-1") or lp.get(f"FR-E820-{family}-1")
-        if any(t in model for t in ("D740", "E740", "E840")):
+        if any(t in model for t in ("D740","E740","E840")):
             return lp.get(f"FR-A840-{family}-1") or lp.get(f"FR-E840-{family}-1")
-
     m = re.match(r"FR-([A-Z])", model)
     if m and family:
         series = m.group(1)
         for alt in "AEFD":
-            if alt == series:
-                continue
+            if alt==series: continue
             alt_model = re.sub(r"FR-[A-Z]", f"FR-{alt}", model, 1)
             if alt_model in lp:
                 return lp[alt_model]
-
     return None
 
 # ─── SERIES / CAPACITY HELPERS ─────────────────────────
@@ -152,12 +143,17 @@ lp_map = parse_listprice(listprice_csv)
 inv = pd.read_csv(inv_csv)
 inv.columns = inv.columns.str.strip()
 
-col_src = "Name" if "Name" in inv.columns else "Model"
+# v0.7 tweak: detect "Model Name" first, then "Name", then "Model"
+col_src = (
+    "Model Name" if "Model Name" in inv.columns
+    else "Name"      if "Name"      in inv.columns
+    else "Model"
+)
+
 inv["Model"] = (
-    inv[col_src]
-       .astype(str)
+    inv[col_src].astype(str)
        .apply(lambda s: s.split("||")[-1].strip())
-       .replace({"FR-D720S-025-NA": "FR-D720S-0.4K"})
+       .replace({"FR-D720S-025-NA":"FR-D720S-0.4K"})
 )
 
 inv = inv[
@@ -166,99 +162,84 @@ inv = inv[
 ]
 
 inv["Qty"]        = inv["Qty owned"].astype(int)
-inv["TotalCost"]  = inv["Total cost"].str.replace(",", "").astype(float)
+inv["TotalCost"]  = inv["Total cost"].str.replace(",","").astype(float)
 inv["COGS"]       = inv["TotalCost"] / inv["Qty"]
 inv["COGS_x1.75"] = inv["COGS"] * 1.75
 
-p127       = pd.read_csv(price127_csv)
-p127_map   = dict(
-    zip(
-        p127.iloc[:, 0].str.strip(),
-        p127.iloc[:, 1].astype(str).str.replace(",", "").astype(float),
-    )
-)
-inv["1.27"]      = inv["Model"].apply(lambda m: p127_map.get(m, fallback127(m, p127_map)))
+p127     = pd.read_csv(price127_csv)
+p127_map = dict(zip(
+    p127.iloc[:,0].str.strip(),
+    p127.iloc[:,1].astype(str).str.replace(",","").astype(float)
+))
+inv["1.27"]      = inv["Model"].apply(lambda m: p127_map.get(m, fallback127(m,p127_map)))
 inv["Series"]    = inv["Model"].apply(series_tag)
 inv["ListPrice"] = inv["Model"].apply(lambda m: list_price(m, lp_map))
 
-inv["Disc20"] = inv["ListPrice"] * 0.80
-inv["Disc25"] = inv["ListPrice"] * 0.75
-inv["Disc30"] = inv["ListPrice"] * 0.70
-inv["GPpct"]  = (inv["ListPrice"] - inv["COGS"]) / inv["COGS"] * 100
+inv["Disc20"] = inv["ListPrice"]*0.80
+inv["Disc25"] = inv["ListPrice"]*0.75
+inv["Disc30"] = inv["ListPrice"]*0.70
+inv["GPpct"]  = (inv["ListPrice"]-inv["COGS"])/inv["COGS"]*100
 
 inv["Capacity"]    = inv["Model"].apply(capacity_val)
-order_map          = {"D": 0, "E": 1, "F": 2, "A": 3, "H": 4}
+order_map          = {"D":0,"E":1,"F":2,"A":3,"H":4}
 inv["SeriesOrder"] = inv["Series"].map(order_map).fillna(99)
-inv.sort_values(["Capacity", "SeriesOrder"], inplace=True, ignore_index=True)
-inv.insert(0, "SL", range(1, len(inv) + 1))
+inv.sort_values(["Capacity","SeriesOrder"], inplace=True, ignore_index=True)
+inv.insert(0,"SL", range(1,len(inv)+1))
 
 # ─── PDF OUTPUT ─────────────────────────────────────────
 class StockPDF(FPDF):
     def header(self):
-        self.set_font("Arial", "B", 16)
-        self.cell(0, 8, "VFD STOCK LIST", 0, 1, "C")
-        self.ln(1)
-        self.set_font("Arial", "", 10)
-        self.cell(0, 5, datetime.now().strftime("Date: %d %B, %Y"), 0, 1, "C")
-        self.cell(0, 5, "Smart Industrial Solution Ltd.", 0, 1, "C")
-        self.ln(4)
-
+        self.set_font("Arial","B",16)
+        self.cell(0,8,"VFD STOCK LIST",0,1,"C"); self.ln(1)
+        self.set_font("Arial","",10)
+        self.cell(0,5,datetime.now().strftime("Date: %d %B, %Y"),0,1,"C")
+        self.cell(0,5,"Smart Industrial Solution Ltd.",0,1,"C"); self.ln(4)
     def footer(self):
-        self.set_y(-12)
-        self.set_font("Arial", "I", 8)
-        self.cell(0, 6, f"Page {self.page_no()}", 0, 0, "C")
+        self.set_y(-12); self.set_font("Arial","I",8)
+        self.cell(0,6,f"Page {self.page_no()}",0,0,"C")
 
 cols = [
-    ("SL", 8, "C"), ("Model", 34, "L"), ("Qty", 8, "C"),
-    ("List Price", 17, "R"), ("20% Disc", 17, "R"), ("25% Disc", 17, "R"),
-    ("30% Disc", 17, "R"), ("GP%", 11, "R"), ("COGS", 17, "R"),
-    ("COGS ×1.75", 18, "R"), ("1.27", 17, "R"),
+    ("SL",8,"C"),("Model",34,"L"),("Qty",8,"C"),
+    ("List Price",17,"R"),("20% Disc",17,"R"),("25% Disc",17,"R"),
+    ("30% Disc",17,"R"),("GP%",11,"R"),("COGS",17,"R"),
+    ("COGS ×1.75",18,"R"),("1.27",17,"R"),
 ]
 
-pdf = StockPDF("P", "mm", "A4")
-mm = MARGIN_INCH * 25.4
-pdf.set_margins(mm, 15, mm)
-pdf.set_auto_page_break(True, 15)
+pdf = StockPDF("P","mm","A4")
+mm = MARGIN_INCH*25.4
+pdf.set_margins(mm,15,mm)
+pdf.set_auto_page_break(True,15)
 pdf.add_page()
 
-pdf.set_font("Arial", "B", HDR_FONT)
-for title, width, align in cols:
-    pdf.cell(width, ROW_H, title, 1, 0, align)
+pdf.set_font("Arial","B",HDR_FONT)
+for t,w,a in cols: pdf.cell(w,ROW_H,t,1,0,a)
 pdf.ln()
 
-pdf.set_font("Arial", "", BODY_FONT)
-shade = False
-for _, r in inv.iterrows():
-    fill = 242 if shade else 255
-    pdf.set_fill_color(fill, fill, fill)
+pdf.set_font("Arial","",BODY_FONT)
+shade=False
+for _,r in inv.iterrows():
+    pdf.set_fill_color(*(242,)*3 if shade else (255,)*3)
+    row = [
+        r["SL"], r["Model"], r["Qty"],
+        r["ListPrice"], r["Disc20"], r["Disc25"], r["Disc30"],
+        f"{r['GPpct']:.2f}%" if pd.notna(r["GPpct"]) else "",
+        r["COGS"], r["COGS_x1.75"], r["1.27"]
+    ]
+    for (_,w,a),v in zip(cols,row):
+        pdf.cell(w,ROW_H,str(v) if not isinstance(v,(int,float)) else f"{v:,.2f}",1,0,a,shade)
+    pdf.ln(); shade = not shade
 
-    pdf.cell(cols[0][1], ROW_H, str(int(r["SL"])), 1, 0, "C", shade)
-    pdf.cell(cols[1][1], ROW_H, r["Model"], 1, 0, "L", shade)
-    pdf.cell(cols[2][1], ROW_H, str(int(r["Qty"])), 1, 0, "C", shade)
-    pdf.cell(cols[3][1], ROW_H, money(r["ListPrice"]), 1, 0, "R", shade)
-    pdf.cell(cols[4][1], ROW_H, money(r["Disc20"]), 1, 0, "R", shade)
-    pdf.cell(cols[5][1], ROW_H, money(r["Disc25"]), 1, 0, "R", shade)
-    pdf.cell(cols[6][1], ROW_H, money(r["Disc30"]), 1, 0, "R", shade)
-    pdf.cell(cols[7][1], ROW_H, f"{r['GPpct']:.2f}%" if pd.notna(r["GPpct"]) else "", 1, 0, "R", shade)
-    pdf.cell(cols[8][1], ROW_H, money(r["COGS"]), 1, 0, "R", shade)
-    pdf.cell(cols[9][1], ROW_H, money(r["COGS_x1.75"]), 1, 0, "R", shade)
-    pdf.cell(cols[10][1], ROW_H, money(r["1.27"]), 1, 0, "R", shade)
+pdf.set_font("Arial","B",BODY_FONT)
+pdf.cell(cols[0][1]+cols[1][1],ROW_H,"Total",1,0,"R")
+pdf.cell(cols[2][1],ROW_H,str(inv["Qty"].sum()),1,0,"C")
+pdf.cell(sum(w for _,w,_ in cols[3:]),ROW_H,"",1,0)
 
-    pdf.ln()
-    shade = not shade
-
-pdf.set_font("Arial", "B", BODY_FONT)
-pdf.cell(cols[0][1] + cols[1][1], ROW_H, "Total", 1, 0, "R")
-pdf.cell(cols[2][1], ROW_H, str(int(inv["Qty"].sum())), 1, 0, "C")
-pdf.cell(sum(w for _, w, _ in cols[3:]), ROW_H, "", 1, 0)
-
-# ─── version‑tagged filename ───────────────────────────
 os.makedirs(OUT_DIR, exist_ok=True)
 tag      = datetime.now().strftime("%y%m%d")
 existing = glob.glob(f"{OUT_DIR}/SISL_VFD_PL_{tag}_V.*.pdf")
 pattern  = re.compile(r"_V\.(\d{2})\.pdf$")
-vers     = [int(m.group(1)) for f in existing if (m := pattern.search(os.path.basename(f)))]
-outfile  = f"SISL_VFD_PL_{tag}_V.{(max(vers) + 1 if vers else 5):02d}.pdf"
+vers     = [int(m.group(1)) for f in existing if (m:=pattern.search(os.path.basename(f)))]
+outfile  = f"SISL_VFD_PL_{tag}_V.{(max(vers)+1 if vers else 5):02d}.pdf"
 
-pdf.output(os.path.join(OUT_DIR, outfile))
+pdf.output(os.path.join(OUT_DIR,outfile))
 print("Generated:", outfile)
