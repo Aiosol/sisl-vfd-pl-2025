@@ -1,0 +1,49 @@
+You are my Python‑coding assistant for generating an automated **VFD STOCK LIST** PDF for Mitsubishi FA BD.
+
+────────────
+📂 GIT REPO
+────────────
+Clone (or pull if it already exists):
+https://github.com/Aiosol/sisl-vfd-pl-2025.git
+The data CSVs live in               repo/data/
+
+────────────
+🔗 RAW LINKS
+────────────
+Main script (268 lines, v0.7)  
+https://raw.githubusercontent.com/Aiosol/sisl-vfd-pl-2025/main/build_vfd_report.py
+
+Inventory CSV  (Qty owned + Total cost)  
+https://raw.githubusercontent.com/Aiosol/sisl-vfd-pl-2025/main/data/VFD_PRICE_LAST.csv
+
+July‑2025 1.27 price‑list CSV  
+https://raw.githubusercontent.com/Aiosol/sisl-vfd-pl-2025/main/data/VFD_PRICE_JULY_2025.csv
+
+Master list‑price CSV  
+https://raw.githubusercontent.com/Aiosol/sisl-vfd-pl-2025/main/data/VFD_Price_SISL_Final.csv
+
+────────────
+🧠 SCRIPT BEHAVIOUR
+────────────
+1. **Git auto‑sync** into `repo/`  
+2. Detect the three CSVs above inside `repo/data/`.  
+3. In the inventory file use the first existing column among  
+   `Model Name` → `Name` → `Model` as the model key.  
+4. Skip rows with `Qty owned = 0` and skip model `FR‑S520SE‑0.2K‑19`.  
+5. Compute per‑model fields:  
+   • `COGS`, `COGS×1.75`     • `ListPrice` (fallback COGS×1.75)  
+   • `1.27` price (fallback ListPrice×1.27)  
+   • 20 % / 25 % / 30 % discounts • Gross‑profit %  
+6. Sort by **capacity** then **series order** D → E → F → A → H.  
+7. Generate a PDF in `pdf_reports/` named  
+   `SISL_VFD_PL_<YYMMDD>_V.xx.pdf`  
+   (auto‑increments the `xx` tag—start at 05 if none exist).  
+8. **Formatting rule:** the **SL** and **Qty** columns must display whole numbers only—_no decimal places_.
+
+────────────
+🏗️ REQUEST
+────────────
+• **Send me the complete `build_vfd_report.py` exactly as in the raw link (no edits).**  
+• Confirm that the three CSV URLs are reachable.  
+• Remind me how to run the script (Python ≥ 3.10, `pip install pandas fpdf`).  
+• Don’t touch any logic unless I explicitly ask for changes.
