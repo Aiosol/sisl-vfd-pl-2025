@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-SISL VFD Stock Report Generator · v0.9
+SISL VFD Stock Report Generator · v1.0
 • Reads three CSVs in ./data (fallback to repo/data)
-• Fuzzy header matching for all CSVs
-• Safe series‑tag extraction (no more NoneType errors)
+• Fuzzy header matching for all CSVs (now Qty owned won’t miss)
+• Safe series‑tag extraction (no NoneType errors)
 • Outputs version‑tagged PDF into ./pdf_reports
 """
 
@@ -36,39 +36,41 @@ INV_CSV   = find_csv("LAST")
 P127_CSV  = find_csv("JULY_2025")
 LIST_CSV  = find_csv("Final")
 if not all((INV_CSV, P127_CSV, LIST_CSV)):
-    sys.exit("❌  One or more CSVs missing in ./data")
+    sys.exit("❌ One or more CSVs missing in ./data")
 
 # ─── Fuzzy header mapper ───────────────────────────────
-def map_cols(df: pd.DataFrame, spec: dict[str, list[str] or str]):
+def map_cols(df: pd.DataFrame, spec):
     df = df.rename(columns=lambda c: c.strip())
-    cols = [c for c in df.columns]
+    cols = list(df.columns)
     mapping = {}
-    lowmap = {c.lower(): c for c in cols}
     for need, variants in spec.items():
         found = False
         for col in cols:
             low = col.lower()
-            options = (variants if isinstance(variants, list) and isinstance(variants[0], list)
-                       else [variants] if isinstance(variants, str) or not isinstance(variants[0], list)
-                       else variants)
+            # build a list of alternative match-conditions
+            options = (
+                variants
+                if isinstance(variants, list) and isinstance(variants[0], list)
+                else [variants]
+            )
             for opt in options:
-                # opt can be a token or list of tokens
                 if isinstance(opt, str):
                     if opt.lower() in low:
                         mapping[col] = need; found = True; break
                 else:
+                    # opt is list of tokens
                     if all(tok in low for tok in opt):
                         mapping[col] = need; found = True; break
             if found: break
         if not found:
-            print("⚠️  Header row:", cols)
-            raise ValueError(f"❌  Column '{need}' not found.")
+            print("⚠️ Header row:", cols)
+            raise ValueError(f"❌ Column '{need}' not found.")
     return df.rename(columns=mapping)
 
 # ─── Load & normalize CSVs ─────────────────────────────
 inv   = map_cols(pd.read_csv(INV_CSV), {
     "Model name": [["model","name"], "name", ["material","name"]],
-    "Qty owned":  ["qty","quantity"],
+    "Qty owned":  [["qty"], ["quantity"], ["qty","owned"]],
     "Total cost": [["total","cost"]]
 })
 p127  = map_cols(pd.read_csv(P127_CSV), {
@@ -88,10 +90,11 @@ inv["Model"] = (
 )
 inv = inv[(inv["Qty owned"]>0) & ~inv["Model"].eq("FR-S520SE-0.2K-19")].copy()
 inv["Qty"]       = inv["Qty owned"].astype(int, errors="ignore")
-inv["TotalCost"] = (inv["Total cost"]
-                    .astype(str)
-                    .str.replace(",", "")
-                    .astype(float))
+inv["TotalCost"] = (
+    inv["Total cost"].astype(str)
+       .str.replace(",", "")
+       .astype(float)
+)
 inv["COGS"]       = inv["TotalCost"] / inv["Qty"]
 inv["COGS_x1.75"] = inv["COGS"] * 1.75
 
@@ -104,6 +107,7 @@ plist_map = dict(zip(
     plist["Model name"].str.strip(),
     plist["ListPrice"].astype(str).str.replace(",", "").astype(float)
 ))
+
 def fallback127(m:str):
     capm = re.search(r"-(?:H)?([\d.]+)K", m)
     if not capm: return None
@@ -114,13 +118,13 @@ def fallback127(m:str):
 inv["1.27"]      = inv["Model"].apply(lambda m: p127_map.get(m) or fallback127(m))
 inv["ListPrice"] = inv["Model"].map(plist_map)
 
-# ─── Discounts, GP% ───────────────────────────────────
+# ─── Discounts & GP% ──────────────────────────────────
 inv["Disc20"] = inv["ListPrice"] * 0.80
 inv["Disc25"] = inv["ListPrice"] * 0.75
 inv["Disc30"] = inv["ListPrice"] * 0.70
 inv["GPpct"]  = (inv["ListPrice"] - inv["COGS"]) / inv["COGS"] * 100
 
-# ─── Series & capacity helpers (now safe) ────────────
+# ─── Series & capacity helpers (safe) ────────────────
 def series_tag(m:str) -> str:
     if not isinstance(m, str): return ""
     mu = m.upper()
@@ -129,7 +133,7 @@ def series_tag(m:str) -> str:
     return match.group(1) if match else ""
 def capacity_val(m:str) -> float:
     match = re.search(r"-(?:H)?([\d.]+)K", m)
-    return float(match.group(1)) if match else 0.0
+    return float(match[1]) if match else 0.0
 
 inv["Capacity"]    = inv["Model"].apply(capacity_val)
 inv["SeriesOrder"] = inv["Model"].apply(series_tag).map(
@@ -142,12 +146,10 @@ inv.insert(0, "SL", range(1, len(inv)+1))
 class StockPDF(FPDF):
     def header(self):
         self.set_font("Arial","B",16)
-        self.cell(0,9,"VFD STOCK LIST",0,1,"C")
-        self.ln(1)
+        self.cell(0,9,"VFD STOCK LIST",0,1,"C"); self.ln(1)
         self.set_font("Arial","",10)
         self.cell(0,5,datetime.now().strftime("Date: %d %B %Y"),0,1,"C")
-        self.cell(0,5,"Smart Industrial Solution Ltd.",0,1,"C")
-        self.ln(4)
+        self.cell(0,5,"Smart Industrial Solution Ltd.",0,1,"C"); self.ln(4)
     def footer(self):
         self.set_y(-12)
         self.set_font("Arial","I",8)
@@ -187,20 +189,15 @@ for _, r in inv.iterrows():
         pdf.cell(w,5,fmt(val),1,0,align,shade)
     pdf.ln(); shade = not shade
 
-# Totals row
 pdf.set_font("Arial","B",7)
 pdf.cell(cols[0][1]+cols[1][1],5,"Total",1,0,"R")
 pdf.cell(cols[2][1],5,str(inv["Qty"].sum()),1,0,"C")
 pdf.cell(sum(w for _,w,_ in cols[3:]),5,"",1,0)
 
-# Save with version tag
 tag      = datetime.now().strftime("%y%m%d")
-existing = glob.glob(str(OUT_DIR/f"SISL_VFD_PL_{tag}_V.*.pdf"))
-ver      = max(
-    [int(re.search(r"_V\.(\d{2})", f).group(1)) for f in existing],
-    default=4
-) + 1
+exist    = glob.glob(str(OUT_DIR/f"SISL_VFD_PL_{tag}_V.*.pdf"))
+ver      = max([int(re.search(r"_V\.(\d{2})",f).group(1)) for f in exist], default=4)+1
 outfile  = OUT_DIR / f"SISL_VFD_PL_{tag}_V.{ver:02d}.pdf"
 
 pdf.output(str(outfile))
-print("✅  Generated:", outfile)
+print("✅ Generated:", outfile)
